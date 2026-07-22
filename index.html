@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mijn Reiskaart</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root {
+    --bg: #0f1720;
+    --panel: #172433;
+    --accent: #f4a259;
+    --accent2: #4fa3d1;
+    --glow: #ffb257;
+    --text: #eaf0f6;
+    --muted: #9fb0c0;
+    --danger: #e05d5d;
+    --ok: #5cc98a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+  }
+  #map { position: absolute; inset: 0; background: #0f1720; }
+
+  /* Gloeiend stadsgebied */
+  .glow-area {
+    fill: var(--glow);
+    stroke: #ffd9a8;
+    stroke-width: 1.2;
+    filter: drop-shadow(0 0 5px var(--glow)) drop-shadow(0 0 12px var(--glow));
+    animation: pulseGlow 3.4s ease-in-out infinite;
+  }
+  @keyframes pulseGlow {
+    0%, 100% { fill-opacity: .18; stroke-opacity: .55; }
+    50%      { fill-opacity: .42; stroke-opacity: .95; }
+  }
+
+  .topbar {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 1000;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 14px;
+    background: linear-gradient(180deg, rgba(15,23,32,0.95), rgba(15,23,32,0.75) 70%, rgba(15,23,32,0));
+    pointer-events: none;
+  }
+  .topbar > * { pointer-events: auto; }
+  .brand { font-weight: 700; font-size: 18px; margin-right: 6px; white-space: nowrap; }
+  .brand small { color: var(--muted); font-weight: 400; font-size: 12px; }
+
+  .search { position: relative; flex: 1 1 260px; min-width: 200px; max-width: 460px; }
+  .search input {
+    width: 100%; padding: 9px 12px; border-radius: 10px; border: 1px solid #2a3b4e;
+    background: var(--panel); color: var(--text); font-size: 14px; outline: none;
+  }
+  .search input::placeholder { color: var(--muted); }
+  .results {
+    position: absolute; top: 44px; left: 0; right: 0;
+    background: var(--panel); border: 1px solid #2a3b4e; border-radius: 10px;
+    overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,.4); display: none; max-height: 320px; overflow-y: auto;
+  }
+  .results .item { padding: 9px 12px; cursor: pointer; font-size: 13px; border-bottom: 1px solid #223245; }
+  .results .item:last-child { border-bottom: none; }
+  .results .item:hover { background: #1e2f42; }
+  .results .item small { color: var(--muted); display: block; }
+
+  button {
+    font-family: inherit; cursor: pointer; border: none; border-radius: 10px;
+    padding: 9px 14px; font-size: 14px; font-weight: 600; color: #0f1720; background: var(--accent);
+  }
+  button.ghost { background: var(--panel); color: var(--text); border: 1px solid #2a3b4e; }
+  button.blue { background: var(--accent2); }
+  button.danger { background: var(--danger); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+
+  .stats {
+    position: absolute; left: 14px; bottom: 14px; z-index: 1000;
+    background: rgba(23,36,51,.92); border: 1px solid #2a3b4e; border-radius: 12px;
+    padding: 10px 14px; font-size: 13px; color: var(--muted); backdrop-filter: blur(4px);
+  }
+  .stats b { color: var(--text); font-size: 16px; }
+
+  .badge {
+    position: absolute; right: 14px; bottom: 14px; z-index: 1000; font-size: 12px; color: var(--muted);
+  }
+
+  .overlay {
+    position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.55);
+    display: none; align-items: center; justify-content: center; padding: 16px;
+  }
+  .overlay.show { display: flex; }
+  .card {
+    width: 100%; max-width: 420px; background: var(--panel); border: 1px solid #2a3b4e;
+    border-radius: 16px; padding: 20px; box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  }
+  .card h3 { margin: 0 0 4px; font-size: 18px; }
+  .card p.hint { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  .field input, .field textarea {
+    width: 100%; padding: 9px 11px; border-radius: 9px; border: 1px solid #2a3b4e;
+    background: #0f1b27; color: var(--text); font-size: 14px; font-family: inherit; outline: none;
+  }
+  .field textarea { resize: vertical; min-height: 58px; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; flex-wrap: wrap; }
+  .msg { font-size: 13px; margin-top: 10px; min-height: 18px; }
+  .msg.err { color: var(--danger); }
+  .msg.ok { color: var(--ok); }
+
+  .pop h4 { margin: 0 0 6px; font-size: 15px; }
+  .pop .meta { color: #4a5b6c; font-size: 12px; margin-bottom: 6px; }
+  .pop .line { font-size: 13px; margin: 3px 0; }
+  .pop .line b { color: #34506b; }
+  .pop .popbtns { margin-top: 8px; display: flex; gap: 6px; }
+  .pop .popbtns button { padding: 5px 10px; font-size: 12px; }
+  .leaflet-popup-content { margin: 12px 14px; }
+
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: #172433; color: var(--text); border: 1px solid #2a3b4e;
+    padding: 10px 16px; border-radius: 10px; z-index: 3000; font-size: 14px;
+    opacity: 0; transition: opacity .25s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+  @media (max-width: 560px) {
+    .brand small { display: none; }
+    .stats { font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="topbar">
+  <div class="brand">🌍 Mijn Reiskaart <small>reizen van Robbe</small></div>
+  <div class="search">
+    <input id="searchInput" type="text" placeholder="Zoek een dorp of stad… (bv. Gent, Rome, Tokyo)" autocomplete="off" />
+    <div class="results" id="results"></div>
+  </div>
+  <button id="editToggle" class="ghost">🔒 Bewerken</button>
+</div>
+
+<div class="stats" id="stats">Laden…</div>
+<div class="badge" id="modeBadge"></div>
+
+<!-- Unlock modal -->
+<div class="overlay" id="unlockOverlay">
+  <div class="card">
+    <h3>Bewerken ontgrendelen</h3>
+    <p class="hint">Plak je persoonlijke GitHub-token. Die blijft enkel in deze browser bewaard en wordt nergens gedeeld. Zie de handleiding om er een te maken.</p>
+    <div class="field">
+      <label>GitHub token</label>
+      <input id="tokenInput" type="password" placeholder="github_pat_…" />
+    </div>
+    <div class="actions">
+      <button class="ghost" onclick="closeOverlay('unlockOverlay')">Annuleren</button>
+      <button class="blue" id="unlockBtn">Ontgrendelen</button>
+    </div>
+    <div class="msg" id="unlockMsg"></div>
+  </div>
+</div>
+
+<!-- Add / edit place modal -->
+<div class="overlay" id="placeOverlay">
+  <div class="card">
+    <h3 id="placeTitle">Plaats toevoegen</h3>
+    <p class="hint" id="placeCoords"></p>
+    <div class="field">
+      <label>Naam</label>
+      <input id="fName" type="text" placeholder="bv. Gent, België" />
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Datum / periode</label>
+        <input id="fDate" type="text" placeholder="bv. zomer 2024" />
+      </div>
+      <div class="field">
+        <label>Land</label>
+        <input id="fCountry" type="text" placeholder="bv. België" />
+      </div>
+    </div>
+    <div class="field">
+      <label>🏨 Waar verbleven</label>
+      <input id="fStay" type="text" placeholder="hotel / adres / naam" />
+    </div>
+    <div class="field">
+      <label>🍽️ Waar gegeten</label>
+      <input id="fFood" type="text" placeholder="restaurant / gerecht" />
+    </div>
+    <div class="field">
+      <label>Notities</label>
+      <textarea id="fNotes" placeholder="Herinneringen, tips, …"></textarea>
+    </div>
+    <div class="actions">
+      <button class="danger" id="deleteBtn" style="margin-right:auto; display:none;">Verwijderen</button>
+      <button class="ghost" onclick="closeOverlay('placeOverlay')">Annuleren</button>
+      <button id="saveBtn">Opslaan</button>
+    </div>
+    <div class="msg" id="placeMsg"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* ============================================================
+   CONFIG — pas deze regels aan naar jouw GitHub-gegevens.
+   ============================================================ */
+const CONFIG = {
+  owner:  "RobbeVanhu",   // je GitHub-gebruikersnaam
+  repo:   "reiskaart",    // de naam van je repository
+  branch: "main",         // meestal "main"
+  path:   "places.json"   // laat staan
+};
+/* ============================================================ */
+
+let map, places = [], layers = {}, editMode = false, token = null;
+let editingId = null, pendingLatLng = null, pendingGeojson = null, pendingRadius = null;
+let searchResults = [];
+
+// ---------- init map ----------
+map = L.map("map", { worldCopyJump: true, zoomControl: true }).setView([30, 10], 2);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 19, subdomains: "abcd"
+}).addTo(map);
+
+const dotIcon = L.divIcon({
+  className: "", iconSize: [14, 14], iconAnchor: [7, 7],
+  html: '<div style="width:12px;height:12px;border-radius:50%;background:#fff;border:2px solid #ffb257;box-shadow:0 0 6px #ffb257"></div>'
+});
+
+// ---------- helpers ----------
+function $(id){ return document.getElementById(id); }
+function openOverlay(id){ $(id).classList.add("show"); }
+function closeOverlay(id){ $(id).classList.remove("show"); $("placeMsg").textContent=""; $("unlockMsg").textContent=""; }
+function toast(t){ const el=$("toast"); el.textContent=t; el.classList.add("show"); setTimeout(()=>el.classList.remove("show"),2200); }
+function esc(s){ return (s||"").replace(/[&<>"]/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
+function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+function isPolygon(gj){ return gj && gj.type && /Polygon/.test(gj.type); }
+
+// ---------- load data ----------
+async function loadPlaces(){
+  try {
+    const res = await fetch(CONFIG.path + "?t=" + Date.now(), { cache: "no-store" });
+    if (res.ok) { places = await res.json(); if(!Array.isArray(places)) places=[]; }
+    else places = [];
+  } catch(e){ places = []; }
+  renderAll();
+}
+
+function renderAll(){
+  Object.values(layers).forEach(arr => arr.forEach(l => map.removeLayer(l)));
+  layers = {};
+  places.forEach(renderPlace);
+  updateStats();
+}
+
+function renderPlace(p){
+  const group = [];
+  // gloeiend gebied
+  if (isPolygon(p.geojson)) {
+    const g = L.geoJSON(p.geojson, { interactive: false, className: "glow-area" }).addTo(map);
+    group.push(g);
+  } else {
+    const c = L.circle([p.lat, p.lng], {
+      radius: p.radius || 3000, interactive: false, className: "glow-area"
+    }).addTo(map);
+    group.push(c);
+  }
+  // klikpunt in het midden
+  const m = L.marker([p.lat, p.lng], { icon: dotIcon }).addTo(map);
+  m.bindPopup(() => popupHtml(p));
+  group.push(m);
+  layers[p.id] = group;
+}
+
+function popupHtml(p){
+  let h = '<div class="pop"><h4>'+esc(p.name)+'</h4>';
+  const meta = [p.country, p.date].filter(Boolean).join(" · ");
+  if (meta) h += '<div class="meta">'+esc(meta)+'</div>';
+  if (p.stay)  h += '<div class="line"><b>🏨 Verblijf:</b> '+esc(p.stay)+'</div>';
+  if (p.food)  h += '<div class="line"><b>🍽️ Gegeten:</b> '+esc(p.food)+'</div>';
+  if (p.notes) h += '<div class="line">'+esc(p.notes)+'</div>';
+  if (editMode) {
+    h += '<div class="popbtns"><button class="blue" onclick="editPlace(\''+p.id+'\')">Bewerken</button>'
+       + '<button class="danger" onclick="removePlace(\''+p.id+'\')">Verwijderen</button></div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+function updateStats(){
+  const countries = new Set(places.map(p => (p.country||"").trim().toLowerCase()).filter(Boolean));
+  $("stats").innerHTML = '<b>'+places.length+'</b> plaatsen &nbsp;·&nbsp; <b>'+countries.size+'</b> landen';
+}
+
+// ---------- search (Nominatim, met stadsgrenzen) ----------
+let searchTimer = null;
+$("searchInput").addEventListener("input", function(){
+  const q = this.value.trim();
+  clearTimeout(searchTimer);
+  if (q.length < 3){ $("results").style.display="none"; return; }
+  searchTimer = setTimeout(() => doSearch(q), 350);
+});
+document.addEventListener("click", e => {
+  if (!e.target.closest(".search")) $("results").style.display="none";
+});
+
+function bboxRadius(bb){ // bb = [south, north, west, east]
+  if (!bb || bb.length < 4) return 3000;
+  const s=+bb[0], n=+bb[1], w=+bb[2], e=+bb[3];
+  const latM = (n - s) * 111000;
+  const lngM = (e - w) * 111000 * Math.cos((n+s)/2 * Math.PI/180);
+  return Math.max(800, Math.min(60000, Math.sqrt(latM*latM + lngM*lngM) / 2));
+}
+
+async function doSearch(q){
+  try {
+    const url = "https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&polygon_geojson=1&polygon_threshold=0.003&limit=6&accept-language=nl&q=" + encodeURIComponent(q);
+    const res = await fetch(url, { headers: { "Accept": "application/json" } });
+    searchResults = await res.json();
+    const box = $("results");
+    if (!searchResults.length){ box.style.display="none"; return; }
+    box.innerHTML = searchResults.map((d, i) => {
+      const country = d.address ? (d.address.country||"") : "";
+      return '<div class="item" data-i="'+i+'">'
+           + esc(d.name || d.display_name.split(",")[0]) + '<small>' + esc(d.display_name) + '</small></div>';
+    }).join("");
+    box.style.display = "block";
+    box.querySelectorAll(".item").forEach(it => it.addEventListener("click", () => selectResult(+it.dataset.i)));
+  } catch(e){ $("results").style.display="none"; }
+}
+
+function selectResult(i){
+  const d = searchResults[i];
+  if (!d) return;
+  const lat = parseFloat(d.lat), lng = parseFloat(d.lon);
+  const gj = isPolygon(d.geojson) ? d.geojson : null;
+  if (gj) map.flyToBounds(L.geoJSON(gj).getBounds(), { maxZoom: 11 });
+  else map.flyTo([lat, lng], 9);
+  $("results").style.display = "none";
+  $("searchInput").value = "";
+  if (editMode) {
+    const shortName = d.display_name.split(",").slice(0,2).join(",").trim();
+    const country = d.address ? (d.address.country||"") : "";
+    openPlaceForm(null, lat, lng, shortName, country, gj, bboxRadius(d.boundingbox));
+  } else {
+    toast("Ontgrendel bewerken (🔒) om deze plaats toe te voegen.");
+  }
+}
+
+// ---------- click to add ----------
+map.on("click", async e => {
+  if (!editMode) return;
+  const { lat, lng } = e.latlng;
+  openPlaceForm(null, lat, lng, "", "", null, 3000);
+  try {
+    const url = "https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1&polygon_geojson=1&polygon_threshold=0.003&accept-language=nl&lat="+lat+"&lon="+lng;
+    const r = await fetch(url); const d = await r.json();
+    if (d && d.address) {
+      const a = d.address;
+      const place = a.city || a.town || a.village || a.hamlet || a.municipality || a.county || "";
+      if (place && !$("fName").value) $("fName").value = place + (a.country ? ", "+a.country : "");
+      if (a.country && !$("fCountry").value) $("fCountry").value = a.country;
+      if (isPolygon(d.geojson)) pendingGeojson = d.geojson;
+      if (d.boundingbox) pendingRadius = bboxRadius(d.boundingbox);
+    }
+  } catch(err){}
+});
+
+// ---------- place form ----------
+function openPlaceForm(id, lat, lng, name, country, geojson, radius){
+  editingId = id; pendingLatLng = { lat, lng };
+  pendingGeojson = geojson || null; pendingRadius = radius || 3000;
+  $("placeTitle").textContent = id ? "Plaats bewerken" : "Plaats toevoegen";
+  $("placeCoords").textContent = "📍 " + lat.toFixed(4) + ", " + lng.toFixed(4) + (isPolygon(geojson) ? "  ·  stadsgrens gevonden ✨" : "");
+  const p = id ? places.find(x => x.id === id) : null;
+  $("fName").value = p ? p.name : (name || "");
+  $("fDate").value = p ? (p.date||"") : "";
+  $("fCountry").value = p ? (p.country||"") : (country || "");
+  $("fStay").value = p ? (p.stay||"") : "";
+  $("fFood").value = p ? (p.food||"") : "";
+  $("fNotes").value = p ? (p.notes||"") : "";
+  $("deleteBtn").style.display = id ? "inline-block" : "none";
+  openOverlay("placeOverlay");
+}
+
+function editPlace(id){
+  const p = places.find(x=>x.id===id);
+  if(p){ map.closePopup(); openPlaceForm(id, p.lat, p.lng, p.name, p.country, p.geojson, p.radius); }
+}
+
+$("saveBtn").addEventListener("click", async () => {
+  const name = $("fName").value.trim();
+  if (!name){ setMsg("placeMsg","Geef minstens een naam in.","err"); return; }
+  const data = {
+    name,
+    date: $("fDate").value.trim(),
+    country: $("fCountry").value.trim(),
+    stay: $("fStay").value.trim(),
+    food: $("fFood").value.trim(),
+    notes: $("fNotes").value.trim(),
+    lat: pendingLatLng.lat, lng: pendingLatLng.lng,
+    geojson: pendingGeojson || null,
+    radius: pendingRadius || 3000
+  };
+  if (editingId){
+    const p = places.find(x=>x.id===editingId);
+    Object.assign(p, data);
+  } else {
+    data.id = uid();
+    places.push(data);
+  }
+  renderAll();
+  await publish("placeMsg", "placeOverlay");
+});
+
+$("deleteBtn").addEventListener("click", async () => {
+  if (!editingId) return;
+  if (!confirm("Deze plaats verwijderen?")) return;
+  places = places.filter(x => x.id !== editingId);
+  renderAll();
+  await publish("placeMsg", "placeOverlay");
+});
+
+function removePlace(id){
+  if (!confirm("Deze plaats verwijderen?")) return;
+  places = places.filter(x => x.id !== id);
+  renderAll(); map.closePopup();
+  publish(null, null);
+}
+
+// ---------- edit mode / token ----------
+$("editToggle").addEventListener("click", () => {
+  if (editMode){
+    editMode = false; token = null;
+    try { localStorage.removeItem("reiskaart_token"); } catch(e){}
+    setEditUI();
+    toast("Vergrendeld. Alleen-lezen.");
+  } else {
+    const saved = safeGet("reiskaart_token");
+    if (saved){ $("tokenInput").value = saved; }
+    openOverlay("unlockOverlay");
+  }
+});
+
+$("unlockBtn").addEventListener("click", async () => {
+  const t = $("tokenInput").value.trim();
+  if (!t){ setMsg("unlockMsg","Plak eerst je token.","err"); return; }
+  setMsg("unlockMsg","Controleren…","");
+  const ok = await checkToken(t);
+  if (ok){
+    token = t; editMode = true;
+    try { localStorage.setItem("reiskaart_token", t); } catch(e){}
+    setEditUI(); closeOverlay("unlockOverlay");
+    toast("Bewerken ontgrendeld ✏️");
+  } else {
+    setMsg("unlockMsg","Token werkt niet of heeft geen toegang tot de repo. Check de handleiding.","err");
+  }
+});
+
+async function checkToken(t){
+  try {
+    const res = await fetch("https://api.github.com/repos/"+CONFIG.owner+"/"+CONFIG.repo, {
+      headers: { "Authorization": "Bearer "+t, "Accept": "application/vnd.github+json" }
+    });
+    return res.ok;
+  } catch(e){ return false; }
+}
+
+function setEditUI(){
+  $("editToggle").innerHTML = editMode ? "✏️ Bewerken aan" : "🔒 Bewerken";
+  $("editToggle").className = editMode ? "blue" : "ghost";
+  $("modeBadge").textContent = editMode ? "bewerk-modus" : "";
+  renderAll();
+}
+
+// ---------- publish to GitHub ----------
+async function getSha(){
+  try {
+    const res = await fetch("https://api.github.com/repos/"+CONFIG.owner+"/"+CONFIG.repo+"/contents/"+CONFIG.path+"?ref="+CONFIG.branch, {
+      headers: { "Authorization": "Bearer "+token, "Accept": "application/vnd.github+json" }
+    });
+    if (res.ok){ const d = await res.json(); return d.sha; }
+    return null;
+  } catch(e){ return null; }
+}
+
+function b64(str){ return btoa(unescape(encodeURIComponent(str))); }
+
+async function publish(msgEl, overlayEl){
+  if (!editMode || !token){ if(msgEl) setMsg(msgEl,"Niet ontgrendeld.","err"); return; }
+  if (msgEl) setMsg(msgEl,"Publiceren…","");
+  try {
+    const sha = await getSha();
+    const body = {
+      message: "Reiskaart bijgewerkt (" + new Date().toISOString() + ")",
+      content: b64(JSON.stringify(places, null, 2)),
+      branch: CONFIG.branch
+    };
+    if (sha) body.sha = sha;
+    const res = await fetch("https://api.github.com/repos/"+CONFIG.owner+"/"+CONFIG.repo+"/contents/"+CONFIG.path, {
+      method: "PUT",
+      headers: { "Authorization": "Bearer "+token, "Accept": "application/vnd.github+json", "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    if (res.ok){
+      if (overlayEl) closeOverlay(overlayEl);
+      toast("Opgeslagen & online ✅");
+    } else {
+      const err = await res.json().catch(()=>({}));
+      if (msgEl) setMsg(msgEl, "Opslaan mislukt: " + (err.message||res.status), "err");
+      else toast("Opslaan mislukt (" + res.status + ")");
+    }
+  } catch(e){
+    if (msgEl) setMsg(msgEl, "Netwerkfout bij opslaan.", "err"); else toast("Netwerkfout");
+  }
+}
+
+// ---------- misc ----------
+function setMsg(id, txt, cls){ const el=$(id); el.textContent=txt; el.className="msg "+(cls||""); }
+function safeGet(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+
+(function(){
+  const saved = safeGet("reiskaart_token");
+  if (saved){ token = saved; editMode = true; }
+  setEditUI();
+})();
+
+loadPlaces();
+</script>
+</body>
+</html>
