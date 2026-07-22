@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mijn Reiskaart</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root {
+    --bg: #0f1720;
+    --panel: #172433;
+    --accent: #f4a259;
+    --accent2: #4fa3d1;
+    --text: #eaf0f6;
+    --muted: #9fb0c0;
+    --danger: #e05d5d;
+    --ok: #5cc98a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--text);
+    background: var(--bg);
+  }
+  #map { position: absolute; inset: 0; }
+
+  .topbar {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 1000;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 14px;
+    background: linear-gradient(180deg, rgba(15,23,32,0.95), rgba(15,23,32,0.75) 70%, rgba(15,23,32,0));
+    pointer-events: none;
+  }
+  .topbar > * { pointer-events: auto; }
+  .brand { font-weight: 700; font-size: 18px; margin-right: 6px; white-space: nowrap; }
+  .brand small { color: var(--muted); font-weight: 400; font-size: 12px; }
+
+  .search { position: relative; flex: 1 1 260px; min-width: 200px; max-width: 460px; }
+  .search input {
+    width: 100%; padding: 9px 12px; border-radius: 10px; border: 1px solid #2a3b4e;
+    background: var(--panel); color: var(--text); font-size: 14px; outline: none;
+  }
+  .search input::placeholder { color: var(--muted); }
+  .results {
+    position: absolute; top: 44px; left: 0; right: 0;
+    background: var(--panel); border: 1px solid #2a3b4e; border-radius: 10px;
+    overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,.4); display: none; max-height: 320px; overflow-y: auto;
+  }
+  .results .item { padding: 9px 12px; cursor: pointer; font-size: 13px; border-bottom: 1px solid #223245; }
+  .results .item:last-child { border-bottom: none; }
+  .results .item:hover { background: #1e2f42; }
+  .results .item small { color: var(--muted); display: block; }
+
+  button {
+    font-family: inherit; cursor: pointer; border: none; border-radius: 10px;
+    padding: 9px 14px; font-size: 14px; font-weight: 600; color: #0f1720; background: var(--accent);
+  }
+  button.ghost { background: var(--panel); color: var(--text); border: 1px solid #2a3b4e; }
+  button.blue { background: var(--accent2); }
+  button.danger { background: var(--danger); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+
+  .stats {
+    position: absolute; left: 14px; bottom: 14px; z-index: 1000;
+    background: rgba(23,36,51,.92); border: 1px solid #2a3b4e; border-radius: 12px;
+    padding: 10px 14px; font-size: 13px; color: var(--muted); backdrop-filter: blur(4px);
+  }
+  .stats b { color: var(--text); font-size: 16px; }
+
+  .badge {
+    position: absolute; right: 14px; bottom: 14px; z-index: 1000; font-size: 12px; color: var(--muted);
+  }
+
+  /* Modal / panels */
+  .overlay {
+    position: fixed; inset: 0; z-index: 2000; background: rgba(0,0,0,.55);
+    display: none; align-items: center; justify-content: center; padding: 16px;
+  }
+  .overlay.show { display: flex; }
+  .card {
+    width: 100%; max-width: 420px; background: var(--panel); border: 1px solid #2a3b4e;
+    border-radius: 16px; padding: 20px; box-shadow: 0 20px 60px rgba(0,0,0,.5);
+  }
+  .card h3 { margin: 0 0 4px; font-size: 18px; }
+  .card p.hint { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+  .field input, .field textarea {
+    width: 100%; padding: 9px 11px; border-radius: 9px; border: 1px solid #2a3b4e;
+    background: #0f1b27; color: var(--text); font-size: 14px; font-family: inherit; outline: none;
+  }
+  .field textarea { resize: vertical; min-height: 58px; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; flex-wrap: wrap; }
+  .msg { font-size: 13px; margin-top: 10px; min-height: 18px; }
+  .msg.err { color: var(--danger); }
+  .msg.ok { color: var(--ok); }
+
+  /* Popup content */
+  .pop h4 { margin: 0 0 6px; font-size: 15px; }
+  .pop .meta { color: #4a5b6c; font-size: 12px; margin-bottom: 6px; }
+  .pop .line { font-size: 13px; margin: 3px 0; }
+  .pop .line b { color: #34506b; }
+  .pop .popbtns { margin-top: 8px; display: flex; gap: 6px; }
+  .pop .popbtns button { padding: 5px 10px; font-size: 12px; }
+
+  .leaflet-popup-content { margin: 12px 14px; }
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: #172433; color: var(--text); border: 1px solid #2a3b4e;
+    padding: 10px 16px; border-radius: 10px; z-index: 3000; font-size: 14px;
+    opacity: 0; transition: opacity .25s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+  @media (max-width: 560px) {
+    .brand small { display: none; }
+    .stats { font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="topbar">
+  <div class="brand">🌍 Mijn Reiskaart <small>reizen van Robbe</small></div>
+  <div class="search">
+    <input id="searchInput" type="text" placeholder="Zoek een dorp of stad… (bv. Gent, Rome, Tokyo)" autocomplete="off" />
+    <div class="results" id="results"></div>
+  </div>
+  <button id="editToggle" class="ghost">🔒 Bewerken</button>
+</div>
+
+<div class="stats" id="stats">Laden…</div>
+<div class="badge" id="modeBadge"></div>
+
+<!-- Unlock modal -->
+<div class="overlay" id="unlockOverlay">
+  <div class="card">
+    <h3>Bewerken ontgrendelen</h3>
+    <p class="hint">Plak je persoonlijke GitHub-token. Die blijft enkel in deze browser bewaard en wordt nergens gedeeld. Zie de handleiding om er een te maken.</p>
+    <div class="field">
+      <label>GitHub token</label>
+      <input id="tokenInput" type="password" placeholder="github_pat_…" />
+    </div>
+    <div class="actions">
+      <button class="ghost" onclick="closeOverlay('unlockOverlay')">Annuleren</button>
+      <button class="blue" id="unlockBtn">Ontgrendelen</button>
+    </div>
+    <div class="msg" id="unlockMsg"></div>
+  </div>
+</div>
+
+<!-- Add / edit place modal -->
+<div class="overlay" id="placeOverlay">
+  <div class="card">
+    <h3 id="placeTitle">Plaats toevoegen</h3>
+    <p class="hint" id="placeCoords"></p>
+    <div class="field">
+      <label>Naam</label>
+      <input id="fName" type="text" placeholder="bv. Gent, België" />
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Datum / periode</label>
+        <input id="fDate" type="text" placeholder="bv. zomer 2024" />
+      </div>
+      <div class="field">
+        <label>Land</label>
+        <input id="fCountry" type="text" placeholder="bv. België" />
+      </div>
+    </div>
+    <div class="field">
+      <label>🏨 Waar verbleven</label>
+      <input id="fStay" type="text" placeholder="hotel / adres / naam" />
+    </div>
+    <div class="field">
+      <label>🍽️ Waar gegeten</label>
+      <input id="fFood" type="text" placeholder="restaurant / gerecht" />
+    </div>
+    <div class="field">
+      <label>Notities</label>
+      <textarea id="fNotes" placeholder="Herinneringen, tips, …"></textarea>
+    </div>
+    <div class="actions">
+      <button class="danger" id="deleteBtn" style="margin-right:auto; display:none;">Verwijderen</button>
+      <button class="ghost" onclick="closeOverlay('placeOverlay')">Annuleren</button>
+      <button id="saveBtn">Opslaan</button>
+    </div>
+    <div class="msg" id="placeMsg"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* ============================================================
+   CONFIG — pas deze 4 regels aan naar jouw GitHub-gegevens.
+   ============================================================ */
+const CONFIG = {
+  owner:  "JOUW-GEBRUIKERSNAAM",   // je GitHub-gebruikersnaam
+  repo:   "reiskaart",             // de naam van je repository
+  branch: "main",                  // meestal "main"
+  path:   "places.json"            // laat staan
+};
+/* ============================================================ */
+
+let map, places = [], markers = {}, editMode = false, token = null;
+let editingId = null, pendingLatLng = null, dataSha = null;
+
+// ---------- init map ----------
+map = L.map("map", { worldCopyJump: true, zoomControl: true }).setView([30, 10], 2);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 19, subdomains: "abcd"
+}).addTo(map);
+
+const visitedIcon = L.divIcon({
+  className: "", iconSize: [18, 18], iconAnchor: [9, 9],
+  html: '<div style="width:16px;height:16px;border-radius:50%;background:#f4a259;border:2px solid #fff;box-shadow:0 0 0 2px rgba(244,162,89,.4)"></div>'
+});
+
+// ---------- helpers ----------
+function $(id){ return document.getElementById(id); }
+function openOverlay(id){ $(id).classList.add("show"); }
+function closeOverlay(id){ $(id).classList.remove("show"); $("placeMsg").textContent=""; $("unlockMsg").textContent=""; }
+function toast(t){ const el=$("toast"); el.textContent=t; el.classList.add("show"); setTimeout(()=>el.classList.remove("show"),2200); }
+function esc(s){ return (s||"").replace(/[&<>"]/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
+function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+
+// ---------- load data ----------
+async function loadPlaces(){
+  try {
+    const res = await fetch(CONFIG.path + "?t=" + Date.now(), { cache: "no-store" });
+    if (res.ok) { places = await res.json(); if(!Array.isArray(places)) places=[]; }
+    else places = [];
+  } catch(e){ places = []; }
+  renderAll();
+}
+
+function renderAll(){
+  Object.values(markers).forEach(m => map.removeLayer(m));
+  markers = {};
+  places.forEach(addMarker);
+  updateStats();
+}
+
+function addMarker(p){
+  const m = L.marker([p.lat, p.lng], { icon: visitedIcon }).addTo(map);
+  m.bindPopup(() => popupHtml(p));
+  markers[p.id] = m;
+}
+
+function popupHtml(p){
+  let h = '<div class="pop"><h4>'+esc(p.name)+'</h4>';
+  const meta = [p.country, p.date].filter(Boolean).join(" · ");
+  if (meta) h += '<div class="meta">'+esc(meta)+'</div>';
+  if (p.stay)  h += '<div class="line"><b>🏨 Verblijf:</b> '+esc(p.stay)+'</div>';
+  if (p.food)  h += '<div class="line"><b>🍽️ Gegeten:</b> '+esc(p.food)+'</div>';
+  if (p.notes) h += '<div class="line">'+esc(p.notes)+'</div>';
+  if (editMode) {
+    h += '<div class="popbtns"><button class="blue" onclick="editPlace(\''+p.id+'\')">Bewerken</button>'
+       + '<button class="danger" onclick="removePlace(\''+p.id+'\')">Verwijderen</button></div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+function updateStats(){
+  const countries = new Set(places.map(p => (p.country||"").trim().toLowerCase()).filter(Boolean));
+  $("stats").innerHTML = '<b>'+places.length+'</b> plaatsen &nbsp;·&nbsp; <b>'+countries.size+'</b> landen';
+}
+
+// ---------- search (Nominatim) ----------
+let searchTimer = null;
+$("searchInput").addEventListener("input", function(){
+  const q = this.value.trim();
+  clearTimeout(searchTimer);
+  if (q.length < 3){ $("results").style.display="none"; return; }
+  searchTimer = setTimeout(() => doSearch(q), 350);
+});
+document.addEventListener("click", e => {
+  if (!e.target.closest(".search")) $("results").style.display="none";
+});
+
+async function doSearch(q){
+  try {
+    const url = "https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=6&accept-language=nl&q=" + encodeURIComponent(q);
+    const res = await fetch(url, { headers: { "Accept": "application/json" } });
+    const data = await res.json();
+    const box = $("results");
+    if (!data.length){ box.style.display="none"; return; }
+    box.innerHTML = data.map(d => {
+      const country = d.address ? (d.address.country||"") : "";
+      return '<div class="item" data-lat="'+d.lat+'" data-lng="'+d.lon+'" data-name="'+esc(d.display_name)+'" data-country="'+esc(country)+'">'
+           + esc(d.name || d.display_name.split(",")[0]) + '<small>' + esc(d.display_name) + '</small></div>';
+    }).join("");
+    box.style.display = "block";
+    box.querySelectorAll(".item").forEach(it => it.addEventListener("click", () => {
+      const lat = parseFloat(it.dataset.lat), lng = parseFloat(it.dataset.lng);
+      map.flyTo([lat, lng], 8);
+      box.style.display = "none";
+      $("searchInput").value = "";
+      if (editMode) {
+        const shortName = it.dataset.name.split(",").slice(0,2).join(",").trim();
+        openPlaceForm(null, lat, lng, shortName, it.dataset.country);
+      } else {
+        toast("Ontgrendel bewerken (🔒) om deze plaats toe te voegen.");
+      }
+    }));
+  } catch(e){ $("results").style.display="none"; }
+}
+
+// ---------- click to add ----------
+map.on("click", async e => {
+  if (!editMode) return;
+  const { lat, lng } = e.latlng;
+  openPlaceForm(null, lat, lng, "", "");
+  // reverse geocode to prefill name
+  try {
+    const url = "https://nominatim.openstreetmap.org/reverse?format=json&accept-language=nl&lat="+lat+"&lon="+lng;
+    const r = await fetch(url); const d = await r.json();
+    if (d && d.address) {
+      const a = d.address;
+      const place = a.city || a.town || a.village || a.hamlet || a.municipality || a.county || "";
+      if (place && !$("fName").value) $("fName").value = place + (a.country ? ", "+a.country : "");
+      if (a.country && !$("fCountry").value) $("fCountry").value = a.country;
+    }
+  } catch(err){}
+});
+
+// ---------- place form ----------
+function openPlaceForm(id, lat, lng, name, country){
+  editingId = id; pendingLatLng = { lat, lng };
+  $("placeTitle").textContent = id ? "Plaats bewerken" : "Plaats toevoegen";
+  $("placeCoords").textContent = "📍 " + lat.toFixed(4) + ", " + lng.toFixed(4);
+  const p = id ? places.find(x => x.id === id) : null;
+  $("fName").value = p ? p.name : (name || "");
+  $("fDate").value = p ? (p.date||"") : "";
+  $("fCountry").value = p ? (p.country||"") : (country || "");
+  $("fStay").value = p ? (p.stay||"") : "";
+  $("fFood").value = p ? (p.food||"") : "";
+  $("fNotes").value = p ? (p.notes||"") : "";
+  $("deleteBtn").style.display = id ? "inline-block" : "none";
+  openOverlay("placeOverlay");
+}
+
+function editPlace(id){ const p = places.find(x=>x.id===id); if(p){ map.closePopup(); openPlaceForm(id, p.lat, p.lng, p.name, p.country); } }
+
+$("saveBtn").addEventListener("click", async () => {
+  const name = $("fName").value.trim();
+  if (!name){ setMsg("placeMsg","Geef minstens een naam in.","err"); return; }
+  const data = {
+    name,
+    date: $("fDate").value.trim(),
+    country: $("fCountry").value.trim(),
+    stay: $("fStay").value.trim(),
+    food: $("fFood").value.trim(),
+    notes: $("fNotes").value.trim(),
+    lat: pendingLatLng.lat, lng: pendingLatLng.lng
+  };
+  if (editingId){
+    const p = places.find(x=>x.id===editingId);
+    Object.assign(p, data);
+  } else {
+    data.id = uid();
+    places.push(data);
+  }
+  renderAll();
+  await publish("placeMsg", "placeOverlay");
+});
+
+$("deleteBtn").addEventListener("click", async () => {
+  if (!editingId) return;
+  if (!confirm("Deze plaats verwijderen?")) return;
+  places = places.filter(x => x.id !== editingId);
+  renderAll();
+  await publish("placeMsg", "placeOverlay");
+});
+
+function removePlace(id){
+  if (!confirm("Deze plaats verwijderen?")) return;
+  places = places.filter(x => x.id !== id);
+  renderAll(); map.closePopup();
+  publish(null, null);
+}
+
+// ---------- edit mode / token ----------
+$("editToggle").addEventListener("click", () => {
+  if (editMode){
+    editMode = false; token = null;
+    try { localStorage.removeItem("reiskaart_token"); } catch(e){}
+    setEditUI();
+    toast("Vergrendeld. Alleen-lezen.");
+  } else {
+    const saved = safeGet("reiskaart_token");
+    if (saved){ $("tokenInput").value = saved; }
+    openOverlay("unlockOverlay");
+  }
+});
+
+$("unlockBtn").addEventListener("click", async () => {
+  const t = $("tokenInput").value.trim();
+  if (!t){ setMsg("unlockMsg","Plak eerst je token.","err"); return; }
+  setMsg("unlockMsg","Controleren…","");
+  const ok = await checkToken(t);
+  if (ok){
+    token = t; editMode = true;
+    try { localStorage.setItem("reiskaart_token", t); } catch(e){}
+    setEditUI(); closeOverlay("unlockOverlay");
+    toast("Bewerken ontgrendeld ✏️");
+  } else {
+    setMsg("unlockMsg","Token werkt niet of heeft geen toegang tot de repo. Check de handleiding.","err");
+  }
+});
+
+async function checkToken(t){
+  try {
+    const res = await fetch("https://api.github.com/repos/"+CONFIG.owner+"/"+CONFIG.repo, {
+      headers: { "Authorization": "Bearer "+t, "Accept": "application/vnd.github+json" }
+    });
+    return res.ok;
+  } catch(e){ return false; }
+}
+
+function setEditUI(){
+  $("editToggle").innerHTML = editMode ? "✏️ Bewerken aan" : "🔒 Bewerken";
+  $("editToggle").className = editMode ? "blue" : "ghost";
+  $("modeBadge").textContent = editMode ? "bewerk-modus" : "";
+  renderAll();
+}
+
+// ---------- publish to GitHub ----------
+async function getSha(){
+  try {
+    const res = await fetch("https://api.github.com/repos/"+CONFIG.owner+"/"+CONFIG.repo+"/contents/"+CONFIG.path+"?ref="+CONFIG.branch, {
+      headers: { "Authorization": "Bearer "+token, "Accept": "application/vnd.github+json" }
+    });
+    if (res.ok){ const d = await res.json(); return d.sha; }
+    return null; // file doesn't exist yet
+  } catch(e){ return null; }
+}
+
+function b64(str){
+  return btoa(unescape(encodeURIComponent(str)));
+}
+
+async function publish(msgEl, overlayEl){
+  if (!editMode || !token){ if(msgEl) setMsg(msgEl,"Niet ontgrendeld.","err"); return; }
+  if (msgEl) setMsg(msgEl,"Publiceren…","");
+  try {
+    const sha = await getSha();
+    const body = {
+      message: "Reiskaart bijgewerkt (" + new Date().toISOString() + ")",
+      content: b64(JSON.stringify(places, null, 2)),
+      branch: CONFIG.branch
+    };
+    if (sha) body.sha = sha;
+    const res = await fetch("https://api.github.com/repos/"+CONFIG.owner+"/"+CONFIG.repo+"/contents/"+CONFIG.path, {
+      method: "PUT",
+      headers: { "Authorization": "Bearer "+token, "Accept": "application/vnd.github+json", "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    if (res.ok){
+      if (overlayEl) closeOverlay(overlayEl);
+      toast("Opgeslagen & online ✅");
+    } else {
+      const err = await res.json().catch(()=>({}));
+      if (msgEl) setMsg(msgEl, "Opslaan mislukt: " + (err.message||res.status), "err");
+      else toast("Opslaan mislukt (" + res.status + ")");
+    }
+  } catch(e){
+    if (msgEl) setMsg(msgEl, "Netwerkfout bij opslaan.", "err"); else toast("Netwerkfout");
+  }
+}
+
+// ---------- misc ----------
+function setMsg(id, txt, cls){ const el=$(id); el.textContent=txt; el.className="msg "+(cls||""); }
+function safeGet(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+
+// auto-unlock if token was saved earlier this browser
+(function(){
+  const saved = safeGet("reiskaart_token");
+  if (saved){ token = saved; editMode = true; }
+  setEditUI();
+})();
+
+loadPlaces();
+</script>
+</body>
+</html>
